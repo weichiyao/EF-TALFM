@@ -42,54 +42,6 @@ def map_canonical_atom_order(mol, addHs:bool=False):
 
  
 def get_rotation_matrix(X:Tensor, Y:Tensor, tol=1e-7):
-    """Get the rotation matrix XR = Y
-    Use the first three nodes to determine R
-    Make sure the first three nodes provide a nondegenerate basis! 
-
-    The two bases are constructed as [A1, A2, A1xA2] and [B1, B2, B1xB2], 
-    so both are right-handed whenever A1, A2 (and B1, B2) are linearly independent. 
-    Working through the algebra: det(R) = det(X_prime) / det(Y_prime) = |A1xA2|² / |B1xB2|², 
-    which is strictly positive for any non-degenerate input. 
-    So in exact arithmetic det(R) < 0 is impossible here — it can only mean (a) the upstream basis 
-    filter let through a near-collinear triple, (b) the caller fed in points that aren't actually 
-    related by a rigid motion, or (c) numerical breakdown. 
-    None of those are "a reflection that should be silently fixed."
-
-    On naive-vs-Kabsch, for an exact 3-anchor problem the direct solve is exact and 
-    gives you a single deterministic answer; Kabsch's SVD-based projection is the right tool 
-    when you have noise or >3 points and want a least-squares fit, neither of which applies here. 
-    The only real argument for switching would be code simplicity (one path instead of two).
-
-
-    X: (n, 3)
-    Y: (n, 3)
-    
-    Test cases:
-        X = torch.tensor([
-            [1.0, 2.0, 3.0],
-            [2.0, 2.0, 3.0],
-            [1.0, 3.0, 3.0]
-        ])
-
-        Y = torch.tensor([
-            [4.0, 5.0, 6.0],
-            [4.0, 6.0, 6.0],
-            [5.0, 5.0, 6.0]
-        ])
-
-        R = get_rotation_matrix(X, Y)
-        print("Rotation matrix R:")
-        print(R)
-
-        # Verify rotation
-        Y_computed = (X - X[0]) @ R + Y[0]
-
-        # Use the same rotation matrix to check the following 
-        positions = torch.normal(0,1,(10,3), dtype=torch.float32)
-        positions_moved = positions - positions[0]
-        R_check = get_rotation_matrix(positions_moved, positions_moved @ R)
-
-    """   
     # Given original points
     A1 = X[1] - X[0]
     A2 = X[2] - X[0]
