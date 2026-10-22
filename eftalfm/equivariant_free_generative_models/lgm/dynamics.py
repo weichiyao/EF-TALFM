@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from eftalfm.equivariant_free_generative_models.models.resnet_p.model import CompletePResNet
 from eftalfm.equivariant_free_generative_models.utils import match_size,  softplus
-from equivariant_free_generative_models.lgm.embedder import TimeEmbedding, GaussianFourierFeatures
+from eftalfm.equivariant_free_generative_models.lgm.embedder import TimeEmbedding, GaussianFourierFeatures
 from eftalfm.equivariant_free_generative_models.models.utils import fixed_dimension_init_weights
 from eftalfm.equivariant_free_generative_models.models.resnet_p.model_adaln import CompletePAdaLNResNet
 

@@ -5,7 +5,6 @@ from torch import nn
 from torch import Tensor
 from torchdiffeq import odeint
 
-import random
 import numpy as np
 
  
@@ -14,7 +13,6 @@ from eftalfm.equivariant_free_generative_models.lgm.dynamics import CompletePFlo
 from eftalfm.equivariant_free_generative_models.utils import (
     expand_to_match_size, 
     sum_except_batch, 
-    gaussian_KL,
     whiten_transform_torch, 
     whiten_inverse_torch, 
     pca_precondition_transform_torch, 
@@ -696,7 +694,7 @@ class CompletePLatentFlowMatching(CNFlows):
         conditioning_diagnostics_n: int = 64,
     ) -> tuple[Tensor, dict]:
         if not self.precomputed_latent: 
-            z_mu, z_sigma, padding_mask = self.latent_model.encoder(
+            z_mu, z_sigma, _ = self.latent_model.encoder(
                 x=batched_data['x'],  
                 position=batched_data['pos'], 
                 num_atoms=batched_data.get('num_atoms', None),
@@ -711,7 +709,6 @@ class CompletePLatentFlowMatching(CNFlows):
         else:
             z_mu    = batched_data['z'] 
             z_sigma = batched_data['z_sigma']
-            padding_mask = None
         
         b       = z_mu.shape[0]
         z_mu    = z_mu.view(b, -1)
@@ -721,65 +718,8 @@ class CompletePLatentFlowMatching(CNFlows):
             
         loss_itemized = {}
         # print(f"after sampling from normal: isnan {str(torch.isnan(z).any())}")
-        if self.ae_total_weight > 0:
-            b = batched_data['pos'].shape[0]
-            # Compute reconstruction loss.
-            zeros_z, ones_z = torch.zeros_like(z_mu), torch.ones_like(z_sigma) 
-            # KL for invariant features.
-            loss_kl = gaussian_KL(z_mu, z_sigma, zeros_z, ones_z) 
-            # Sum KL over batch
-            loss_kl = loss_kl.mean()  
-            # Decoder output (reconstruction).
-            decoder_kwargs = {
-                'latent_embeds': z.view(b, 1, -1),
-                'position': batched_data['pos'],
-                'x': batched_data['x'][...,:self.latent_model.num_atom_features],
-                'padding_mask': padding_mask,
-                'num_atoms': batched_data.get('num_atoms', None),
-            }
-            if getattr(self.latent_model.decoder.model, 'use_position_diffusion', False):
-                decoder_kwargs['target_x'] = batched_data['x'][...,:self.latent_model.num_atom_features]
-            decoder_outputs = self.latent_model.decoder(**decoder_kwargs)
-            (
-                pred_position,
-                pred_x_logits,
-                pred_charge_logits,
-                pred_spinmp_logits,
-                pred_number_of_rings_logits,
-                pred_has_fused_rings_logits,
-            ) = decoder_outputs[:6]
-            # Compute the reconstruction loss
-            loss_recon, loss_recon_itemized = self.latent_model.compute_reconstruction_loss(
-                position=batched_data['pos'],      
-                x=batched_data['x'][...,:self.latent_model.num_atom_features],  
-                padding_mask=padding_mask[:,1:],    
-                num_atoms=batched_data.get('num_atoms', None),
-                charge=batched_data.get('charge', None),
-                spin_multiplicity=batched_data.get('spin_multiplicity', None),
-                number_of_rings=batched_data.get('number_of_rings', None),
-                has_fused_rings=batched_data.get('has_fused_rings', None),
-                pred_position=pred_position, 
-                pred_x_logits=pred_x_logits,              
-                pred_charge_logits=pred_charge_logits,
-                pred_spinmp_logits=pred_spinmp_logits,
-                pred_number_of_rings_logits=pred_number_of_rings_logits,
-                pred_has_fused_rings_logits=pred_has_fused_rings_logits, 
-                wpos=self.ae_pos_weight, 
-                wseq=self.ae_seq_weight,
-                wcharge=self.ae_charge_weight,
-                wspinmp=self.ae_spinmp_weight,
-                wring=self.ae_ring_weight,
-            )
-            del pred_position, pred_x_logits, pred_charge_logits, pred_spinmp_logits
-            # Compute the total autoencoder loss meaned over batch 
-            loss_ae = loss_recon + self.ae_kl_weight * loss_kl    # (,)
-            
-            loss_itemized.update(loss_recon_itemized)
-        else:
-            # No autoencoder loss
-            loss_ae = torch.zeros(1, device=z.device, dtype=z.dtype)
-            z = z.detach() # (bz, d)
-            
+        
+        z = z.detach() # (bz, d)
         # Apply transform
         z, _ = self.pretransform_latent(z) 
         
@@ -858,26 +798,22 @@ class CompletePLatentFlowMatching(CNFlows):
 
         del z_mu, z_sigma, z 
         torch.cuda.empty_cache()
-        return loss_ld.mean() + self.ae_total_weight * loss_ae, loss_itemized
+        return loss_ld.mean(), loss_itemized
     
     def instantiate_first_stage(self, latent_model:CloudVAEModelTransformerP):
-        if self.ae_total_weight > 0:
-            self.latent_model = latent_model.train()
-            print("\t To train the latent model")
+        if latent_model is not None:
+            latent_model = latent_model.eval() 
+            latent_model.train = latent_model.disabled_train
+            for param in latent_model.parameters():
+                param.requires_grad = False
+            self.latent_model = latent_model # register latent_model as a submodule.
+            print("\t NOT to train the latent model")
         else:
-            if latent_model is not None:
-                latent_model = latent_model.eval() 
-                latent_model.train = latent_model.disabled_train
-                for param in latent_model.parameters():
-                    param.requires_grad = False
-                self.latent_model = latent_model # register latent_model as a submodule.
-                print("\t NOT to train the latent model")
-            else:
-                print("\t No latent model to instantiate")
-                self.latent_model = None
-    
+            print("\t No latent model to instantiate")
+            self.latent_model = None
+
     @torch.no_grad()
-    def get_reverse_fn(self, ode_method) -> Callable:
+    def get_reverse_fn(self, ode_method:str) -> Callable:
         if ode_method == "dopri5":
             return self.reverse_fn_dopri5
         elif ode_method == "euler":
@@ -885,11 +821,11 @@ class CompletePLatentFlowMatching(CNFlows):
         else:
             raise ValueError(f"Received ode_method={ode_method} is not allowed. Only 'dopri5' and 'euler'.")
     
-    def _integrate_dopri5(self, z, times, y=None, guidance_scale=None):
+    def _integrate_dopri5(self, z:Tensor, times:Tensor, y=None, guidance_scale=None):
         """
         Default: times=[1., 0.] 
         """
-        def field(t, x):
+        def field(t:Tensor, x:Tensor):
             t = t.reshape(-1)
             return self._guided_dynamics(
                 t=t,
@@ -907,7 +843,7 @@ class CompletePLatentFlowMatching(CNFlows):
             atol=self.atol,
         )[-1]
 
-    def _integrate_euler(self, z, times, y=None, guidance_scale=None, steps=25):
+    def _integrate_euler(self, z:Tensor, times:Tensor, y:Tensor=None, guidance_scale=None, steps=25):
         """
         Default: times=[1., 0.], steps=25
         """

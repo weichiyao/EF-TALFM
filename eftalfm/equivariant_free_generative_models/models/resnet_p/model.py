@@ -7,7 +7,7 @@ from torch import Tensor
 from eftalfm.equivariant_free_generative_models.models.submodel import LayerNorm
 from eftalfm.equivariant_free_generative_models.models.utils import init_weights, get_activation_fn
 from eftalfm.equivariant_free_generative_models.models.utils import fixed_dimension_init_weights
-from eftalfm.equivariant_free_generative_models.models.transformer_p.dropout import ClassicDropout, DropPath
+from eftalfm.equivariant_free_generative_models.models.dropout import ClassicDropout, DropPath
 # Define the ResNet block
 class CompletePBasicBlock(nn.Module):
     """

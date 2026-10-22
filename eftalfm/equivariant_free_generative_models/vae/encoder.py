@@ -8,7 +8,7 @@ from torch import Tensor
 
  
 from equivariant_free_generative_models.models.transformer_p.model import CompletePTransformerEncoder
-from equivariant_free_generative_models.models.transformer_p.dropout import ClassicDropout
+from eftalfm.equivariant_free_generative_models.models.dropout import ClassicDropout
 from equivariant_free_generative_models.vae.layers import ParticleFeature, FinetuneHead
 
 

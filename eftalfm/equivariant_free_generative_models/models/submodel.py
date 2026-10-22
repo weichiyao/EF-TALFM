@@ -12,7 +12,7 @@ from functools import partial
 
 
 from eftalfm.equivariant_free_generative_models.models.utils import get_activation_fn, init_weights
-from eftalfm.equivariant_free_generative_models.models.transformer_p.dropout import DropPath, ClassicDropout
+from eftalfm.equivariant_free_generative_models.models.dropout import DropPath, ClassicDropout
 
 
 

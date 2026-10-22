@@ -9,7 +9,7 @@ from eftalfm.equivariant_free_generative_models.models.utils import (
     fixed_dimension_init_weights,
 )
 
-from eftalfm.equivariant_free_generative_models.models.transformer_p.dropout import ClassicDropout, DropPath
+from eftalfm.equivariant_free_generative_models.models.dropout import ClassicDropout, DropPath
 
 def _broadcast_cond(cond: Tensor, x: Tensor) -> Tensor:
     # cond: (B, D), x: (B, D) or (B, L, D)
