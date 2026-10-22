@@ -308,7 +308,7 @@ def get_lgm_model(args, precomputed_latent, dm_pretransform_y=None, dm_invtransf
     )
     lightning_module = GenModelModule(model=model, cfg=args)
     
-    checkpoint_path = os.path.join(args.log_dir, args.pretrained_vae_subfolder, args.train, load_from_checkpoint_filename)
+    checkpoint_path = os.path.join(args.log_dir, args.pretrained_vae_subfolder, "flow_matching", args.train, load_from_checkpoint_filename)
     if os.path.exists(checkpoint_path):
         lightning_module = load_training_weights(lightning_module, checkpoint_path)
         print(f"Loaded lightning module from {checkpoint_path}")
@@ -408,7 +408,7 @@ def _get_checkpoint_dir(args):
     if args.train.startswith("vae"):
         return os.path.join(args.log_dir, args.train, "vae")
     if args.train.startswith("latent"):
-        return os.path.join(args.log_dir, args.pretrained_vae_subfolder, args.train)
+        return os.path.join(args.log_dir, args.pretrained_vae_subfolder, "flow_matching", args.train)
     raise ValueError(f"args.train must start with 'vae' or 'latent'; received {args.train!r}")
 
 
@@ -468,7 +468,7 @@ def main(args, logger):
         _fit_trusted_checkpoint(trainer, lightning_module, dm, ckpt_path=ckpt_path)
     elif args.train[:6] == 'latent':
         # Load the checkpoint if exists
-        ckpt_path=os.path.join(args.log_dir, args.pretrained_vae_subfolder, args.train, args.resume_from_checkpoint) if (args.resume_from_checkpoint is not None) else None
+        ckpt_path=os.path.join(args.log_dir, args.pretrained_vae_subfolder, "flow_matching", args.train, args.resume_from_checkpoint) if (args.resume_from_checkpoint is not None) else None
         _fit_trusted_checkpoint(trainer, lightning_module, dm, ckpt_path=ckpt_path)
     else:
         raise ValueError(f"args.train only accepts 'vae', 'latent'; received {args.train}")            # Load the checkpoint if exists
@@ -492,7 +492,7 @@ if __name__ == "__main__":
         
     elif args.train[:6] == 'latent':
         # Load the checkpoint if exists
-        ckpt_path=os.path.join(args.log_dir, args.pretrained_vae_subfolder, args.train, args.resume_from_checkpoint) if (args.resume_from_checkpoint is not None and args.resume_from_checkpoint != 'none') else None
+        ckpt_path=os.path.join(args.log_dir, args.pretrained_vae_subfolder, "flow_matching", args.train, args.resume_from_checkpoint) if (args.resume_from_checkpoint is not None and args.resume_from_checkpoint != 'none') else None
     
     else:
         raise ValueError(f"args.train only accepts 'vae', 'latent'; received {args.train}")            # Load the checkpoint if exists
@@ -507,8 +507,8 @@ if __name__ == "__main__":
             
         elif args.train[:6] == 'latent':
             # Load the checkpoint if exists
-            args_path=os.path.join(args.log_dir, args.pretrained_vae_subfolder, args.train, 'args.pickle') 
-            final_folder = os.path.join(args.log_dir, args.pretrained_vae_subfolder, args.train)
+            args_path=os.path.join(args.log_dir, args.pretrained_vae_subfolder, "flow_matching", args.train, 'args.pickle') 
+            final_folder = os.path.join(args.log_dir, args.pretrained_vae_subfolder, "flow_matching", args.train)
             
         else:
             raise ValueError(f"args.train only accepts 'vae', 'latent'; received {args.train}")            # Load the checkpoint if exists
@@ -552,9 +552,11 @@ if __name__ == "__main__":
             vae_folderpath=os.path.join(args.log_dir, args.pretrained_vae_subfolder)
             if not os.path.exists(vae_folderpath):
                 raise ValueError(f"args.train='latent' but vae folder path={vae_folderpath} does not exist!")
-            if not os.path.exists(os.path.join(vae_folderpath, args.train)):
-                os.makedirs(os.path.join(vae_folderpath, args.train))  
-            final_folder=os.path.join(vae_folderpath, args.train) 
+            if not os.path.exists(os.path.join(vae_folderpath, "flow_matching")):
+                os.makedirs(os.path.join(vae_folderpath, "flow_matching"))  
+            if not os.path.exists(os.path.join(vae_folderpath, "flow_matching", args.train)):
+                os.makedirs(os.path.join(vae_folderpath, "flow_matching", args.train))  
+            final_folder=os.path.join(vae_folderpath, "flow_matching", args.train) 
                 
         else:
             raise ValueError(f"args.train only accepts 'vae', 'latent'; received {args.train}")            # Load the checkpoint if exists
