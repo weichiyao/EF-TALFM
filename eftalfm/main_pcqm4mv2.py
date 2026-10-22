@@ -249,13 +249,13 @@ def get_lgm_model(args, precomputed_latent, dm_pretransform_y=None, dm_invtransf
                     raise ValueError(f"statstype={statstype} is not valid! Please use the format 'scalar', 'whitener', or 'vector'")
     else: 
         raise ValueError("Set to train model with latent representation, but pretrained_vae_checkpoint is not given! Please train a VAE model first.")
+        
+    from equivariant_free_generative_models.lgm.latent_flow_matching_p import CompletePLatentFlowMatching as LatentFlowMatching
     
-    if args.gm_dynamics_model=='completep_resnet':
-        from equivariant_free_generative_models.lgm.latent_flow_matching_p import CompletePLatentFlowMatching as LatentFlowMatching
+    if args.gm_dynamics_model=='completep_resnet': 
         from equivariant_free_generative_models.lgm.dynamics import CompletePResNetFlowDynamics as Dynamics
         from modules.gm_plmodule import CompletePGenModelModule as GenModelModule
     elif args.gm_dynamics_model=='completep_adaln_resnet':
-        from equivariant_free_generative_models.lgm.latent_flow_matching_p import CompletePLatentFlowMatching as LatentFlowMatching
         from equivariant_free_generative_models.lgm.dynamics import CompletePAdaLNResNetFlowDynamics as Dynamics
         from modules.gm_plmodule import CompletePGenModelModule as GenModelModule
     else:
@@ -573,8 +573,8 @@ def main(args, logger):
         lightning_module = get_lgm_model(
             args, 
             precomputed_latent=precomputed_latent, 
-            dm_pretransform_y=dm.pretransform_y if hasattr(dm, 'pretransform_y') else None, 
-            dm_invtransform_y=dm.invtransform_y if hasattr(dm, 'invtransform_y') else None
+            dm_pretransform_y=getattr(dm, 'pretransform_y', None), 
+            dm_invtransform_y=getattr(dm, 'invtransform_y', None),
         )
         monitor = ['val_lfm_loss']
         mode = ["min"]

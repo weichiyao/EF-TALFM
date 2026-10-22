@@ -57,29 +57,18 @@ class LatentDataset(Dataset):
     
 
 class LatentPLDataModule(pl.LightningDataModule):
-    def __init__(self, cfg, train_file=None, valid_file=None, test_file=None, dummy:bool=False, model_type:str="gm"):
+    def __init__(self, cfg):
         super().__init__() 
 
-        self.cfg = cfg
-        self.dummy = dummy 
-        if not self.dummy:
-            if model_type == "gm":
-                self.train_file  = train_file if train_file is not None else os.path.join(self.cfg.log_dir, self.cfg.pretrained_vae_subfolder, 'vae', self.cfg.gm_latent_train_file)
-                self.valid_file  = valid_file if valid_file is not None else os.path.join(self.cfg.log_dir, self.cfg.pretrained_vae_subfolder, 'vae', self.cfg.gm_latent_valid_file)
-                self.test_file   = test_file  if test_file is not None  else os.path.join(self.cfg.log_dir, self.cfg.pretrained_vae_subfolder, 'vae', self.cfg.gm_latent_test_file) 
-                normalize_y      = self.cfg.gm_normalize_y if hasattr(self.cfg, "gm_normalize_y") else False
-                normalize_y_mode = self.cfg.gm_normalize_y_mode if hasattr(self.cfg, "gm_normalize_y_mode") else "rs"
-            elif model_type == "pm":
-                self.train_file  = train_file if train_file is not None else os.path.join(self.cfg.log_dir, self.cfg.pretrained_vae_subfolder, 'vae', self.cfg.pm_latent_train_file)
-                self.valid_file  = valid_file if valid_file is not None else os.path.join(self.cfg.log_dir, self.cfg.pretrained_vae_subfolder, 'vae', self.cfg.pm_latent_valid_file)
-                self.test_file   = test_file  if test_file is not None  else os.path.join(self.cfg.log_dir, self.cfg.pretrained_vae_subfolder, 'vae', self.cfg.pm_latent_test_file) 
-                normalize_y      = self.cfg.pm_normalize_y if hasattr(self.cfg, "pm_normalize_y") else False
-                normalize_y_mode = self.cfg.pm_normalize_y_mode if hasattr(self.cfg, "pm_normalize_y_mode") else "rs"
-            else:
-                raise ValueError(f"model_type must be 'gm' or 'pm'; received {model_type}")
-            
-            self.get_pretransform(normalize_y, normalize_y_mode)
-    
+        self.cfg = cfg 
+        self.train_file  = os.path.join(self.cfg.log_dir, self.cfg.pretrained_vae_subfolder, 'vae', self.cfg.gm_latent_train_file)
+        self.valid_file  = os.path.join(self.cfg.log_dir, self.cfg.pretrained_vae_subfolder, 'vae', self.cfg.gm_latent_valid_file)
+        self.test_file   = os.path.join(self.cfg.log_dir, self.cfg.pretrained_vae_subfolder, 'vae', self.cfg.gm_latent_test_file) 
+        normalize_y      = getattr(self.cfg, "gm_normalize_y", False)
+        normalize_y_mode = getattr(self.cfg, "gm_normalize_y_mode", "rs")
+        
+        self.get_pretransform(normalize_y, normalize_y_mode)
+
     def setup(self, stage: str | None = None):
         """
         Load data from files and set up datasets.

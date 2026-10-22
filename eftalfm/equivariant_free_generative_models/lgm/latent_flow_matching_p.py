@@ -996,8 +996,7 @@ class CompletePLatentFlowMatching(CNFlows):
         INPUTS:
         =========================
         context : (n_y, d_y)
-        noise   : (n_y*n_samples, d_x)
-        z_sigma : (1, d_x)
+        noise   : (n_y*n_samples, d_x) 
          
         OUTPUT:
         =========================

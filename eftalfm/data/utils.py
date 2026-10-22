@@ -17,7 +17,7 @@ def get_context(y: Tensor, context_idx: LongTensor):
         return context
 
 
-class RobustScalerTransform():
+class RobustScalerTransform:
     def fit(self, x:Tensor): 
         rs = RobustScaler()
         n = x.shape[0]
@@ -32,7 +32,7 @@ class RobustScalerTransform():
         return X * self.scale_.to(X) + self.center_.to(X)
 
 
-class StandardScalerTransform():
+class StandardScalerTransform:
 
     def fit(self, x:Tensor): 
         ss = StandardScaler()
@@ -49,7 +49,7 @@ class StandardScalerTransform():
         return X * self.scale_.to(X) + self.mean_.to(X)
 
 
-class MinMaxScalerTransform():
+class MinMaxScalerTransform:
     def fit(self, x:Tensor): 
         ss = MinMaxScaler(feature_range=(-1, 1))
         n = x.shape[0]

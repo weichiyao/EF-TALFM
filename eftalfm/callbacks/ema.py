@@ -61,7 +61,7 @@ class EMA(Callback):
         self.every_n_steps = every_n_steps
         self.cpu_offload = cpu_offload
 
-    def on_fit_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+    def on_fit_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         device = pl_module.device if not self.cpu_offload else torch.device("cpu")
         trainer.optimizers = [
             EMAOptimizer(
@@ -75,35 +75,35 @@ class EMA(Callback):
             if not isinstance(optim, EMAOptimizer)
         ]
 
-    def on_validation_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+    def on_validation_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         if self._should_validate_ema_weights(trainer):
             self.swap_model_weights(trainer)
 
-    def on_validation_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+    def on_validation_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         if self._should_validate_ema_weights(trainer):
             self.swap_model_weights(trainer)
 
-    def on_test_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+    def on_test_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         if self._should_validate_ema_weights(trainer):
             self.swap_model_weights(trainer)
 
-    def on_test_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+    def on_test_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         if self._should_validate_ema_weights(trainer):
             self.swap_model_weights(trainer)
 
-    def _should_validate_ema_weights(self, trainer: "pl.Trainer") -> bool:
+    def _should_validate_ema_weights(self, trainer: pl.Trainer) -> bool:
         return not self.validate_original_weights and self._ema_initialized(trainer)
 
-    def _ema_initialized(self, trainer: "pl.Trainer") -> bool:
+    def _ema_initialized(self, trainer: pl.Trainer) -> bool:
         return any(isinstance(optimizer, EMAOptimizer) for optimizer in trainer.optimizers)
 
-    def swap_model_weights(self, trainer: "pl.Trainer", saving_ema_model: bool = False):
+    def swap_model_weights(self, trainer: pl.Trainer, saving_ema_model: bool = False):
         for optimizer in trainer.optimizers:
             assert isinstance(optimizer, EMAOptimizer)
             optimizer.switch_main_parameter_weights(saving_ema_model)
 
     @contextlib.contextmanager
-    def save_ema_model(self, trainer: "pl.Trainer"):
+    def save_ema_model(self, trainer: pl.Trainer):
         """Saves an EMA copy of the model + EMA optimizer states for resume."""
         self.swap_model_weights(trainer, saving_ema_model=True)
         try:
@@ -112,7 +112,7 @@ class EMA(Callback):
             self.swap_model_weights(trainer, saving_ema_model=False)
 
     @contextlib.contextmanager
-    def save_original_optimizer_state(self, trainer: "pl.Trainer"):
+    def save_original_optimizer_state(self, trainer: pl.Trainer):
         for optimizer in trainer.optimizers:
             assert isinstance(optimizer, EMAOptimizer)
             optimizer.save_original_optimizer_state = True
@@ -123,7 +123,7 @@ class EMA(Callback):
                 optimizer.save_original_optimizer_state = False
 
     def on_load_checkpoint(
-        self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", checkpoint: dict[str, Any]
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule, checkpoint: dict[str, Any]
     ) -> None:
         checkpoint_callback = trainer.checkpoint_callback
 
@@ -364,7 +364,7 @@ class EMAOptimizer(torch.optim.Optimizer):
         )
         state_dict = {
             "opt": self.optimizer.state_dict(),
-            "ema": ema_params,
+            EMA: ema_params,
             "current_step": self.current_step,
             "decay": self.decay,
             "every_n_steps": self.every_n_steps,
@@ -376,7 +376,7 @@ class EMAOptimizer(torch.optim.Optimizer):
 
         self.optimizer.load_state_dict(state_dict["opt"])
         self.ema_params = tuple(
-            param.to(self.device) for param in copy.deepcopy(state_dict["ema"])
+            param.to(self.device) for param in copy.deepcopy(state_dict[EMA])
         )
         self.current_step = state_dict["current_step"]
         self.decay = state_dict["decay"]
@@ -388,7 +388,7 @@ class EMAOptimizer(torch.optim.Optimizer):
         self.rebuild_ema_params = True
 
 
-def _find_ema_callback(trainer: "pl.Trainer") -> "EMA" | None:
+def _find_ema_callback(trainer: pl.Trainer) -> EMA | None:
     """Return the EMA callback attached to the trainer, or None if not present."""
     for cb in trainer.callbacks:
         if isinstance(cb, EMA):
@@ -411,7 +411,7 @@ class EMAModelCheckpoint(ModelCheckpoint):
     of the save, so the resulting checkpoint contains the EMA weights as the
     primary ``state_dict`` (recoverable directly via
     ``LightningModule.load_from_checkpoint``).  The wrapped optimizer's
-    ``state_dict["ema"]`` entries continue to hold what is now the live copy,
+    ``state_dict[EMA]`` entries continue to hold what is now the live copy,
     so resuming training is unaffected.
 
     Behavior is automatic:
@@ -426,7 +426,7 @@ class EMAModelCheckpoint(ModelCheckpoint):
     the EMA state lives in the optimizer.
     """
 
-    def _save_checkpoint(self, trainer: "pl.Trainer", filepath: str) -> None:
+    def _save_checkpoint(self, trainer: pl.Trainer, filepath: str) -> None:
         ema_callback = _find_ema_callback(trainer)
         if (
             ema_callback is not None
