@@ -12,10 +12,17 @@ name = "eftalfm"
 version = "0.0.1"
 description = "EF-TALFM: Fixed-Dimensional Latent Flow for Generating Variable-Size 3D Molecules"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
-  "lightning"
+  "ModelTraining>=0.0.2,<0.1",
+  "lightning>=2.6,<3"
 ]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["eftalfm*"]
 
 [tool.ruff.lint]
 ignore = ["I001"]

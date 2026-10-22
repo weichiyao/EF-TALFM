@@ -81,7 +81,7 @@ def add_common_arguments(parser:ArgumentParser):
     parser.add_argument('--save_last_model_only', action='store_true', default=False, 
                         help="only save the last checkpoint in Trainer.")
     parser.add_argument('--gradient_clip_adaptive', default="none", 
-                        help=" ema | queue ")
+                        help="none | queue")
     parser.add_argument('--gradient_clip_val', type=float, default=0,
                         help="default don't clip")
     parser.add_argument('--gradient_clip_algorithm', type=str, default='norm', 
@@ -100,7 +100,6 @@ def add_common_arguments(parser:ArgumentParser):
             "dependent epoch validation."
         ),
     )
-    parser.add_argument('--ema', action='store_true', default=False) 
     ### Optimization & lr_scheduler
     parser.add_argument('--optimizer', type=str, default='adamw')
     parser.add_argument('--weight_decay', type=float, default=0.0)

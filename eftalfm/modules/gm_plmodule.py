@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch  
 from torch import Tensor  
-from eftalfm.modules.train_plmodule import TrainPLModule
+from model_training.lightning import TrainPLModule
 from eftalfm.equivariant_free_generative_models.lgm.latent_flow_matching_p import CompletePLatentFlowMatching
 
  
@@ -21,7 +21,7 @@ class CompletePGenModelModule(TrainPLModule):
         self.conditioning_diag_n = getattr(cfg, "gm_conditioning_diag_n", 64)
         
     @property
-    def log_KeyN_dict(self): 
+    def metric_count_keys(self):
         return {}
     
     def pretransform_y(self, y:Tensor):

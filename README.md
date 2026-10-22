@@ -27,6 +27,16 @@ For property-conditioned generation,
 
 On PCQM4Mv2, EF-TALFM achieves a higher yield of unique, novel molecules passing chemical and geometric checks than the evaluated baselines, with lower end-to-end training and sampling times under the reported budgets. For HOMO-LUMO gap targeting, internal-readout selection approximately doubles the density functional theory (DFT)-verified hit rate among retained candidates while largely preserving structural novelty and diversity.
 
+## Shared training utilities
+
+EF-TALFM requires Python 3.12+ and `ModelTraining>=0.0.2,<0.1`. Install the
+updated shared checkout into the same environment before installing EF-TALFM:
+
+```bash
+python -m pip install -e /path/to/ModelTraining
+python -m pip install -e ".[dev]"
+```
+
 ## Citation
 ```bibtex
 @article{yao2026fixed,

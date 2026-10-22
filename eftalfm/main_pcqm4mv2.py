@@ -1,6 +1,5 @@
 from __future__ import annotations
 import argparse
-import inspect
 import wandb
 import pickle
 import os 
@@ -8,10 +7,14 @@ import re
 
 import torch 
 
-from lightning.pytorch.callbacks import Callback, ModelCheckpoint 
 from lightning.pytorch import Trainer, seed_everything 
 from lightning.pytorch.loggers import WandbLogger 
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
+from model_training.lightning import (
+    get_trainer_inputs,
+    fit_trusted_checkpoint as _fit_trusted_checkpoint,
+    load_training_weights,
+)
 
 from eftalfm.argparser_setup.pcqm4mv2 import add_pcqm4mv2_arguments
 from eftalfm.argparser_setup.gm import add_gm_arguments
@@ -26,29 +29,6 @@ from eftalfm.equivariant_free_generative_models.vae.encoder import Cloud3DEncode
 from eftalfm.equivariant_free_generative_models.vae.decoder import Cloud3DDecoder 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
-
-def _fit_trusted_checkpoint(trainer, lightning_module, dm, ckpt_path=None):
-    """Resume full Lightning checkpoints created by this training code.
-
-    PyTorch 2.6+ defaults ``torch.load`` toward weights-only loading. Full
-    Lightning checkpoints include loop, optimizer, scheduler, and config
-    objects, so trusted resume checkpoints need full pickle loading.
-    """
-    if ckpt_path is None:
-        trainer.fit(lightning_module, datamodule=dm)
-        return
-
-    fit_signature = inspect.signature(trainer.fit)
-    if "weights_only" in fit_signature.parameters:
-        trainer.fit(
-            lightning_module,
-            datamodule=dm,
-            ckpt_path=ckpt_path,
-            weights_only=False,
-        )
-    else:
-        trainer.fit(lightning_module, datamodule=dm, ckpt_path=ckpt_path)
-
 
 _WANDB_RUN_DIR_RE = re.compile(r"^(?:offline-)?run-[^-]+-([A-Za-z0-9]+)$")
 
@@ -197,7 +177,9 @@ def get_lgm_model(args, precomputed_latent, dm_pretransform_y=None, dm_invtransf
             vae_model = get_vae_model(vae_args)
             latent_dim = vae_args.latent_dim
             print(f"============= Set to train flow matching model with latent representation with VAE loaded from {pretrained_vae_ckpt_path}. =============")
-            vae_module = CloudVAEPLModule.load_from_checkpoint(pretrained_vae_ckpt_path, model=vae_model, cfg=vae_args, weights_only=False)
+            vae_module = load_training_weights(
+                CloudVAEPLModule(model=vae_model, cfg=vae_args), pretrained_vae_ckpt_path
+            )
             del vae_model
             latent_stats = None    
              
@@ -250,14 +232,14 @@ def get_lgm_model(args, precomputed_latent, dm_pretransform_y=None, dm_invtransf
     else: 
         raise ValueError("Set to train model with latent representation, but pretrained_vae_checkpoint is not given! Please train a VAE model first.")
         
-    from equivariant_free_generative_models.lgm.latent_flow_matching_p import CompletePLatentFlowMatching as LatentFlowMatching
+    from eftalfm.equivariant_free_generative_models.lgm.latent_flow_matching_p import CompletePLatentFlowMatching as LatentFlowMatching
     
     if args.gm_dynamics_model=='completep_resnet': 
-        from equivariant_free_generative_models.lgm.dynamics import CompletePResNetFlowDynamics as Dynamics
-        from modules.gm_plmodule import CompletePGenModelModule as GenModelModule
+        from eftalfm.equivariant_free_generative_models.lgm.dynamics import CompletePResNetFlowDynamics as Dynamics
+        from eftalfm.modules.gm_plmodule import CompletePGenModelModule as GenModelModule
     elif args.gm_dynamics_model=='completep_adaln_resnet':
-        from equivariant_free_generative_models.lgm.dynamics import CompletePAdaLNResNetFlowDynamics as Dynamics
-        from modules.gm_plmodule import CompletePGenModelModule as GenModelModule
+        from eftalfm.equivariant_free_generative_models.lgm.dynamics import CompletePAdaLNResNetFlowDynamics as Dynamics
+        from eftalfm.modules.gm_plmodule import CompletePGenModelModule as GenModelModule
     else:
         raise ValueError(f"gm_dynamics_model only accept 'resnet' or 'generic'; receive {args.gm_dynamics_model}")
     # Define dynamics model and flows
@@ -328,7 +310,7 @@ def get_lgm_model(args, precomputed_latent, dm_pretransform_y=None, dm_invtransf
     
     checkpoint_path = os.path.join(args.log_dir, args.pretrained_vae_subfolder, args.train, load_from_checkpoint_filename)
     if os.path.exists(checkpoint_path):
-        lightning_module = GenModelModule.load_from_checkpoint(checkpoint_path=checkpoint_path, model=model, cfg=args)
+        lightning_module = load_training_weights(lightning_module, checkpoint_path)
         print(f"Loaded lightning module from {checkpoint_path}")
     return lightning_module
 
@@ -421,126 +403,14 @@ def create_args():
     return args
 
 
-def get_trainer_inputs(args, logger, monitor:list | None=None, mode:list | None=None, filename:list | None=None): 
-    if monitor is None:
-        monitor = ['val: Avg REC Loss (mol)']  
-    if mode is None:
-        mode = ['min'] 
-    if filename is None:
-        filename = ['best-epoch{epoch}-step{step}-val_loss{val: Avg REC Loss (mol):.4f}']
-    if isinstance(monitor, str):
-        monitor = [monitor]
-    if isinstance(mode, str):
-        mode = [mode]
-    if isinstance(filename, str):
-        filename = [filename]
- 
-    step_limited_training = hasattr(args, "max_steps") and args.max_steps > 0 and args.max_epochs < 0
+def _get_checkpoint_dir(args):
+    """Resolve EF-TALFM's existing stage-specific checkpoint directory."""
+    if args.train.startswith("vae"):
+        return os.path.join(args.log_dir, args.train, "vae")
+    if args.train.startswith("latent"):
+        return os.path.join(args.log_dir, args.pretrained_vae_subfolder, args.train)
+    raise ValueError(f"args.train must start with 'vae' or 'latent'; received {args.train!r}")
 
-    save_on_train_epoch_end = True
-    every_n_epochs          = max(1, args.log_interval)  # checkpoint/validate every N epochs
-    check_val_every_n_epoch = max(1, args.log_interval)
-    val_check_interval      = None
-
-    last_every_n_epochs = every_n_epochs
-    last_every_n_train_steps = None
-    last_save_on_train_epoch_end = save_on_train_epoch_end
-    monitor_every_n_epochs = every_n_epochs
-    monitor_every_n_train_steps = None
-    monitor_save_on_train_epoch_end = False
-
-    if step_limited_training:
-        last_every_n_epochs = None
-        last_save_on_train_epoch_end = False
-        last_every_n_train_steps = max(500, int(args.log_every_n_steps))
-
-
-    # ---- callbacks (fast & predictable) ----
-    callbacks: list[Callback] = []
-    
-    MonitorCheckpointCls = ModelCheckpoint
-    if hasattr(args, "ema") and args.ema:
-        from eftalfm.callbacks.ema import EMA, EMAModelCheckpoint
-        callbacks = [
-            EMA(decay=0.9999, validate_original_weights=False, every_n_steps=1, cpu_offload=False),
-        ]
-        MonitorCheckpointCls = EMAModelCheckpoint
- 
-    if args.train[:3] == 'vae':
-        dirpath = os.path.join(args.log_dir, args.train, "vae")
-    elif args.train[:6] == 'latent':
-        dirpath = os.path.join(args.log_dir, args.pretrained_vae_subfolder, args.train)
-    else:
-        raise ValueError(f"Received args.train={args.train}, but only 'vae' or 'latent' are allowed")
-    
-    callbacks.append(
-        ModelCheckpoint(
-            save_last=False,
-            save_top_k=1,
-            dirpath=dirpath,
-            filename="last",
-            monitor=None,
-            save_weights_only=False,
-            auto_insert_metric_name=False,
-            enable_version_counter=False,
-            every_n_epochs=last_every_n_epochs,
-            every_n_train_steps=last_every_n_train_steps,
-            save_on_train_epoch_end=last_save_on_train_epoch_end,
-        )
-    ) 
-    n_monitor = len(monitor)
-    for j in range(n_monitor):
-        callbacks.append(
-            # Use the EMA-aware subclass when EMA is enabled so monitored
-            # checkpoints contain the EMA weights (which are what produced
-            # the val metric being monitored).  Falls back to plain
-            # ModelCheckpoint when EMA is off.
-            MonitorCheckpointCls(
-                monitor=monitor[j],
-                dirpath=dirpath,
-                save_last=False,
-                save_top_k=1,
-                save_weights_only=True,
-                mode=mode[j],
-                filename=filename[j],
-                auto_insert_metric_name=False,
-                every_n_epochs=monitor_every_n_epochs,
-                every_n_train_steps=monitor_every_n_train_steps,
-                # Validation metrics are not available until the validation loop finishes,
-                # so save monitored checkpoints after validation, not at train epoch end.
-                save_on_train_epoch_end=monitor_save_on_train_epoch_end,
-            )
-        ) 
-    
-    kwargs_trainer = {
-        'num_sanity_val_steps': 0,  # Disable the sanity check
-        'max_epochs': args.max_epochs, 
-        'min_epochs': max(0, args.min_epochs),
-        'max_steps': args.max_steps if hasattr(args, 'max_steps') else -1,
-        'enable_model_summary': True,
-        'enable_progress_bar': args.progress_bar, 
-        'check_val_every_n_epoch': check_val_every_n_epoch, # epoch-based validation cadence; validate every n epoch
-        'val_check_interval': val_check_interval, # within-epoch validation cadence 
-        'default_root_dir':  dirpath,
-        'enable_checkpointing': True,
-        'logger': logger,
-        'deterministic': True,
-        'accelerator': args.device, 
-        'strategy': 'ddp_find_unused_parameters_true' if args.use_ddp else 'auto',
-        'devices'  : args.n_devices,   # Number of GPUs per node to use
-        'num_nodes': args.num_nodes,   # Number of nodes for distributed training
-        'gradient_clip_val': args.gradient_clip_val, 
-        'gradient_clip_algorithm': args.gradient_clip_algorithm,
-        'accumulate_grad_batches': args.accumulate_grad_batches,
-        'use_distributed_sampler': False,
-        'limit_train_batches': args.limit_train_batches if hasattr(args, 'limit_train_batches') else None,
-        'limit_val_batches': args.limit_val_batches if hasattr(args, 'limit_val_batches') else None,
-        'reload_dataloaders_every_n_epochs': 1 if args.use_ddp else 0,
-        'log_every_n_steps': args.log_every_n_steps if hasattr(args, 'log_every_n_steps') else 100, 
-        'precision': args.precision
-    }
-    
-    return kwargs_trainer, callbacks
 
 ##########################################################################
 def main(args, logger):
@@ -586,7 +456,9 @@ def main(args, logger):
         raise ValueError(f"args.train only accepts 'vae', 'latent'; received {args.train}")
     
     print("Creating trainer ...")
-    kwargs_trainer, callbacks = get_trainer_inputs(args, logger, monitor=monitor, mode=mode, filename=filename)
+    kwargs_trainer, callbacks = get_trainer_inputs(
+        _get_checkpoint_dir(args), args, logger, monitor=monitor, mode=mode, filename=filename
+    )
     # Define trainer
     trainer = Trainer(**kwargs_trainer, callbacks=callbacks)
     

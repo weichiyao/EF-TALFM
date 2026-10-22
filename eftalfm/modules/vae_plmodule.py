@@ -4,8 +4,8 @@ import torch
 from torch import nn
 from torch import Tensor
 
-from eftalfm.modules.train_plmodule import TrainPLModule
-from eftalfm.modules.utils import get_kl_weight 
+from model_training.lightning import TrainPLModule
+from model_training.schedules import get_kl_weight
 
 
 def _as_log_scalar(value, move_cpu: bool = True):
@@ -32,7 +32,7 @@ class CloudVAEPLModule(TrainPLModule):
         self.wkl = self.kl_weight
         
     @property
-    def log_KeyN_dict(self) -> dict:
+    def metric_count_keys(self) -> dict:
         return {}
 
     def _refresh_wkl(self) -> None:

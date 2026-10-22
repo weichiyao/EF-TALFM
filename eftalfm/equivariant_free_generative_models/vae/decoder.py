@@ -211,7 +211,7 @@ class CloudARDecoder(nn.Module):
         
         print(f"Decoder: use_ada_ln_zero = {self.use_ada_ln_zero}")
         if not self.use_ada_ln_zero:
-            from equivariant_free_generative_models.models.transformer_p.model import CompletePTransformerEncoder 
+            from eftalfm.equivariant_free_generative_models.models.transformer_p.model import CompletePTransformerEncoder
             self.decoder = CompletePTransformerEncoder(
                 d_model=self.emb_dim,
                 n_head=self.n_heads,
@@ -235,7 +235,7 @@ class CloudARDecoder(nn.Module):
                 width_input_alpha=self.width_input_alpha,
                 width_output_alpha=self.width_output_alpha)
         else: 
-            from equivariant_free_generative_models.models.transformer_p.model_ada_ln_zero import AdaLNZeroTransformerEncoder
+            from eftalfm.equivariant_free_generative_models.models.transformer_p.model_ada_ln_zero import AdaLNZeroTransformerEncoder
             self.decoder = AdaLNZeroTransformerEncoder(
                 d_model=self.emb_dim,
                 c_dim=self.latent_dim,

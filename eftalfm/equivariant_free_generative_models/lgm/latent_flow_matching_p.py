@@ -20,7 +20,7 @@ from eftalfm.equivariant_free_generative_models.utils import (
 
 )
 
-from typing import Callable 
+from collections.abc import Callable
 
 _MSE_LOSSES = {"l2", "mse"}
 _MAE_LOSSES = {"l1", "mae"}
