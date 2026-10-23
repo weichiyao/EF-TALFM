@@ -17,8 +17,7 @@ class CompletePFlowDynamics(nn.Module):
         self,
         d_model:int,
         x_dim:int,
-        y_dim:int,
-        t_dim:int=1,
+        y_dim:int, 
         hidden_dim:int | None=None, 
         x_encoder_type:str="none",
         t_encoder_type:str="logsnr_sinusoidal",
@@ -66,12 +65,12 @@ class CompletePFlowDynamics(nn.Module):
             self.activation_layer = nn.SiLU()
         else:
             raise ValueError(f"Only accept activation_layer 'relu', 'elu', 'gelu', 'selu', 'sigmoid', 'silu', 'softplus', 'tanh'. Received {activation}.")
-         
-        self.t_dim     = t_dim
+        
         self.x_dim     = x_dim 
         self.y_dim     = y_dim 
+        self.use_y_cond = self.y_dim > 0
+
         self.d_model   = d_model
-        
         self.n_layers  = n_layers  
         
         self.dropout = dropout
@@ -117,8 +116,11 @@ class CompletePFlowDynamics(nn.Module):
                 self.activation_layer, 
                 nn.Linear(self.d_model*(int(self.self_condition)+1)*4, self.d_model),
             )
+            fixed_dimension_init_weights(self.x_encoder[0], init_std=self.init_std)
+            fixed_dimension_init_weights(self.x_encoder[2], init_std=self.init_std)
         elif self.x_encoder_type == "linear":
             self.x_encoder = nn.Linear(self.x_dim*(int(self.self_condition)+1), self.d_model)
+            fixed_dimension_init_weights(self.x_encoder, init_std=self.init_std)
         else:
             raise ValueError(f"Only accept x_encoder_type 'mlp', 'linear'. Received {x_encoder_type}!")
         ####################################################
@@ -127,12 +129,15 @@ class CompletePFlowDynamics(nn.Module):
         if self.y_dim > 0:
             if self.y_encoder_type == "linear":
                 self.y_encoder = nn.Linear(self.y_dim, self.d_model) 
+                fixed_dimension_init_weights(self.y_encoder, init_std=self.init_std) 
             elif self.y_encoder_type == "mlp":
                 self.y_encoder = nn.Sequential(
                     nn.Linear(self.y_dim, self.d_model),
                     nn.SiLU(),
                     nn.Linear(self.d_model, self.d_model)
                 )
+                fixed_dimension_init_weights(self.y_encoder[0], init_std=self.init_std)
+                fixed_dimension_init_weights(self.y_encoder[2], init_std=self.init_std)
             elif self.y_encoder_type == "fourier":
                 self.y_fourier = GaussianFourierFeatures(
                     in_dim=self.y_dim,
@@ -153,24 +158,32 @@ class CompletePFlowDynamics(nn.Module):
 
         self.initialize_model()
 
-    def _encode_context(self, y: Tensor, x: Tensor, y_cond_mask: Tensor = None) -> Tensor | None:
-        if self.y_dim <= 0:
-            return None
+    def _encode_y(self, y: Tensor, x: Tensor, y_cond_mask: Tensor = None) -> Tensor | None:
+        """
+        Build the label conditioning vector cond_y using the selected y encoder.
 
+        Returns a (bz, d_model) tensor. When y is None (fully unconditional) or
+        a sample is dropped via y_cond_mask, that row is set to zeros so the
+        label-modulation path produces a consistent "null" signal at both
+        train and sample time (matching CFG dropout semantics).
+        """
+        if not self.use_y_cond:
+            return None
+        
         if y is None:
             return torch.zeros_like(x)
 
         if self.y_fourier is not None:
             y = self.y_fourier(y)
-        context = self.y_encoder(y)
-        context = match_size(context, x)
+        cond_y = self.y_encoder(y)   # (bz, d_model)
+        cond_y = match_size(cond_y, x)
         if y_cond_mask is not None:
             y_cond_mask = match_size(
-                y_cond_mask.reshape(-1, 1).to(dtype=torch.bool, device=context.device),
-                context,
+                y_cond_mask.reshape(-1, 1).to(dtype=torch.bool, device=cond_y.device),
+                cond_y,
             )
-            context = context.masked_fill(~y_cond_mask, 0.0)
-        return context
+            cond_y = cond_y.masked_fill(~y_cond_mask, 0.0)
+        return cond_y
         
     def initialize_model(self):
         """
@@ -178,21 +191,6 @@ class CompletePFlowDynamics(nn.Module):
         """
         raise NotImplementedError("Subclasses must implement this method to initialize the dynamics model")
 
-    def forward(self, t: Tensor, x: Tensor, y: Tensor = None, y_cond_mask: Tensor = None) -> Tensor:
-        """
-        x: (bz,d)
-        t: (bz,) or (1,)
-        y: (bz,d) or (1,d)
-        """ 
-        x = self.x_encoder(x) 
-        t = self.t_encoder(t.reshape(-1))     # (bz, d)
-        t = match_size(t, x)                  # (bz, d)
-        out = torch.cat((t, x), dim=-1)       # (bz, 2*d)
-        y = self._encode_context(y, x, y_cond_mask=y_cond_mask)
-        if y is not None:
-            out = torch.cat((out, y), dim=-1)    # (bz, 3*d)
-        
-        return self.model(out)     
 
 class CompletePResNetFlowDynamics(CompletePFlowDynamics):
     def __init__(
@@ -200,7 +198,6 @@ class CompletePResNetFlowDynamics(CompletePFlowDynamics):
         d_model:int,
         x_dim:int,
         y_dim:int,
-        t_dim:int=1,
         hidden_dim:int | None = None, 
         x_encoder_type:str="none",
         t_encoder_type:str="logsnr_sinusoidal",
@@ -235,7 +232,6 @@ class CompletePResNetFlowDynamics(CompletePFlowDynamics):
             d_model,
             x_dim,
             y_dim,
-            t_dim,
             hidden_dim, 
             x_encoder_type,
             t_encoder_type,
@@ -287,6 +283,23 @@ class CompletePResNetFlowDynamics(CompletePFlowDynamics):
             standparam=self.standparam,
             init_std=self.init_std,
         )
+    
+    def forward(self, t: Tensor, x: Tensor, y: Tensor = None, y_cond_mask: Tensor = None) -> Tensor:
+        """
+        x: (bz,d)
+        t: (bz,) or (1,)
+        y: (bz,d) or (1,d)
+        """ 
+        x = self.x_encoder(x)
+
+        t = self.t_encoder(t.reshape(-1))     # (bz, d)
+        t = match_size(t, x)                  # (bz, d)
+        out = torch.cat((t, x), dim=-1)       # (bz, 2*d)
+        y = self._encode_y(y, x, y_cond_mask=y_cond_mask)
+        if y is not None:
+            out = torch.cat((out, y), dim=-1)     # (bz, 3*d)
+
+        return self.model(out)  
 
 class CompletePPositiveLinear(torch.nn.Module):
     """Linear layer with weights forced to be positive."""
@@ -359,7 +372,6 @@ class CompletePAdaLNResNetFlowDynamics(CompletePFlowDynamics):
         d_model: int,
         x_dim: int,
         y_dim: int,
-        t_dim: int = 1,
         hidden_dim: int | None = None,
         x_encoder_type: str = "none",
         t_encoder_type: str = "logsnr_sinusoidal",
@@ -395,7 +407,6 @@ class CompletePAdaLNResNetFlowDynamics(CompletePFlowDynamics):
             d_model,
             x_dim,
             y_dim,
-            t_dim,
             hidden_dim,
             x_encoder_type,
             t_encoder_type,
@@ -456,32 +467,6 @@ class CompletePAdaLNResNetFlowDynamics(CompletePFlowDynamics):
             use_y_cond=self.use_y_cond,
             disable_zero_init_adaln=self.disable_zero_init_adaln,
         )
-
-    def _encode_y(self, y: Tensor, x: Tensor, y_cond_mask: Tensor = None) -> Tensor | None:
-        """
-        Build the label conditioning vector cond_y using the selected y encoder.
-
-        Returns a (bz, d_model) tensor. When y is None (fully unconditional) or
-        a sample is dropped via y_cond_mask, that row is set to zeros so the
-        label-modulation path produces a consistent "null" signal at both
-        train and sample time (matching CFG dropout semantics).
-        """
-        if not self.use_y_cond:
-            return None
-        if y is None:
-            return torch.zeros_like(x)
-
-        if self.y_fourier is not None:
-            y = self.y_fourier(y)
-        cond_y = self.y_encoder(y)   # (bz, d_model)
-        cond_y = match_size(cond_y, x)
-        if y_cond_mask is not None:
-            y_cond_mask = match_size(
-                y_cond_mask.reshape(-1, 1).to(dtype=torch.bool, device=cond_y.device),
-                cond_y,
-            )
-            cond_y = cond_y.masked_fill(~y_cond_mask, 0.0)
-        return cond_y
 
     def forward(self, t: Tensor, x: Tensor, y: Tensor = None, y_cond_mask: Tensor = None) -> Tensor:
         """

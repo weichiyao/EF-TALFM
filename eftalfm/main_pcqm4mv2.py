@@ -1,19 +1,17 @@
-from __future__ import annotations
-import argparse
-import wandb
+from __future__ import annotations 
+
 import pickle
 import os 
 import re 
 
 import torch 
 
-from lightning.pytorch import Trainer, seed_everything 
-from lightning.pytorch.loggers import WandbLogger 
-from lightning.pytorch.utilities.rank_zero import rank_zero_only
+from lightning.pytorch import Trainer, seed_everything  
 from model_training.lightning import (
     get_trainer_inputs,
     fit_trusted_checkpoint as _fit_trusted_checkpoint,
     load_training_weights,
+    get_wandb_logger
 )
 
 from eftalfm.argparser_setup.pcqm4mv2 import add_pcqm4mv2_arguments
@@ -51,116 +49,6 @@ def _print_run_summary(args, label: str = "Run config") -> None:
         "wandb_project": args.wandb_project,
     }
     print(f"{label}: {summary}")
-
-
-def _extract_wandb_run_id_from_name(name: str):
-    match = _WANDB_RUN_DIR_RE.match(name)
-    return match.group(1) if match else None
-
-
-def _find_existing_wandb_run_id(wandb_dir: str):
-    if (wandb_dir is None) or (not os.path.isdir(wandb_dir)):
-        return None
-
-    run_id_path = os.path.join(wandb_dir, "wandb_run_id.txt")
-    if os.path.isfile(run_id_path):
-        try:
-            with open(run_id_path, "r", encoding="utf-8") as f:
-                run_id = f.read().strip()
-            if run_id:
-                return run_id
-        except OSError:
-            pass
-
-    latest_run = os.path.join(wandb_dir, "latest-run")
-    if os.path.exists(latest_run):
-        latest_run_name = os.path.basename(os.path.realpath(latest_run))
-        run_id = _extract_wandb_run_id_from_name(latest_run_name)
-        if run_id is not None:
-            return run_id
-
-    candidates = []
-    try:
-        for entry in os.scandir(wandb_dir):
-            if not entry.is_dir():
-                continue
-            run_id = _extract_wandb_run_id_from_name(entry.name)
-            if run_id is not None:
-                candidates.append((entry.stat().st_mtime, run_id))
-    except OSError:
-        return None
-
-    if not candidates:
-        return None
-
-    candidates.sort(reverse=True)
-    return candidates[0][1]
-
-
-def _persist_wandb_run_id(wandb_dir: str, run_id: str):
-    if (wandb_dir is None) or (run_id is None):
-        return
-
-    try:
-        os.makedirs(wandb_dir, exist_ok=True)
-        with open(os.path.join(wandb_dir, "wandb_run_id.txt"), "w", encoding="utf-8") as f:
-            f.write(run_id)
-            f.write("\n")
-    except OSError:
-        pass
-
-
-def _is_rank_zero_process() -> bool:
-    for env_name in ("RANK", "SLURM_PROCID"):
-        env_value = os.environ.get(env_name)
-        if env_value not in (None, ""):
-            try:
-                return int(env_value) == 0
-            except ValueError:
-                pass
-
-    rank = getattr(rank_zero_only, "rank", None)
-    if rank is not None:
-        try:
-            return int(rank) == 0
-        except (TypeError, ValueError):
-            return False
-
-    local_rank = os.environ.get("LOCAL_RANK")
-    if local_rank not in (None, ""):
-        try:
-            return int(local_rank) == 0
-        except ValueError:
-            pass
-
-    return True
-
-
-def _coerce_wandb_run_id(run_id):
-    if callable(run_id):
-        try:
-            run_id = run_id()
-        except TypeError:
-            return None
-    if run_id is None:
-        return None
-    if isinstance(run_id, bytes):
-        run_id = run_id.decode("utf-8", errors="ignore")
-    if not isinstance(run_id, str):
-        run_id = str(run_id)
-    run_id = run_id.strip()
-    return run_id or None
-
-
-def _persist_args_pickle(args_path: str, args_namespace: argparse.Namespace):
-    if args_path is None:
-        return
-
-    try:
-        with open(args_path, 'wb') as f:
-            pickle.dump(args_namespace, f)
-    except OSError:
-        pass
 
 
 def get_lgm_model(args, precomputed_latent, dm_pretransform_y=None, dm_invtransform_y=None, load_from_checkpoint_filename="none"):
@@ -245,7 +133,6 @@ def get_lgm_model(args, precomputed_latent, dm_pretransform_y=None, dm_invtransf
     # Define dynamics model and flows
     dynamics = Dynamics(
         d_model=args.gm_dynamics_d_model if hasattr(args, 'gm_dynamics_d_model') else 128,
-        t_dim=1,
         x_dim=latent_dim, 
         y_dim=args.context_dim,
         hidden_dim=args.gm_dynamics_hidden_dim if hasattr(args, 'gm_dynamics_hidden_dim') else 128,
@@ -583,54 +470,16 @@ if __name__ == "__main__":
     _print_run_summary(args_resumed, label="Effective args")
     seed_everything(args_resumed.seed)
 
-    ## Wandb config
-    if args_resumed.no_wandb:
-        mode = 'disabled'
-    else:
-        mode = 'online' if args_resumed.online else 'offline'
-    os.makedirs(args_resumed.wandb_dir, exist_ok=True)
-    resume_wandb_run_id = getattr(args_resumed, "wandb_run_id", None)
-    should_resume_wandb = (
-        (not args_resumed.no_wandb)
-        and (args_resumed.resume_from_checkpoint not in (None, 'none'))
-    )
-    if should_resume_wandb and (resume_wandb_run_id is None):
-        resume_wandb_run_id = _find_existing_wandb_run_id(args_resumed.wandb_dir)
-    if should_resume_wandb:
-        if resume_wandb_run_id is not None:
-            print(f"Resuming W&B run {resume_wandb_run_id} from '{args_resumed.wandb_dir}'.")
-        else:
-            print(
-                f"Checkpoint resume was requested, but no existing W&B run ID was found in "
-                f"'{args_resumed.wandb_dir}'. Starting a new W&B run."
-            )
-    kwargs = {'entity': args_resumed.wandb_usr, 
-              'name': args_resumed.train, 
-              'project': args_resumed.wandb_project, 
-              'config': args_resumed,
-              'settings': wandb.Settings(
-                  x_disable_stats=False, 
-                  init_timeout=120, 
-                  x_stats_sampling_interval=120,
-                  x_save_requirements=False
-                ),
-              'reinit': "finish_previous",
-              'mode': mode,
-              'dir': args_resumed.wandb_dir,
-              'save_dir': args_resumed.wandb_dir}
-    if resume_wandb_run_id is not None:
-        kwargs['id'] = resume_wandb_run_id
-        kwargs['resume'] = 'must'
-    wandb_logger = WandbLogger(log_model=False, **kwargs)
-    wandb_logger.log_metrics({"debug_wandb_alive": 1.0}, step=0)
-    wandb_summary = getattr(wandb_logger.experiment, "summary", None)
-    if hasattr(wandb_summary, "update"):
-        wandb_summary.update({"debug_wandb_summary_alive": 1})
-    if (not args_resumed.no_wandb) and _is_rank_zero_process():
-        experiment = wandb_logger.experiment
-        run_id = _coerce_wandb_run_id(getattr(experiment, "id", None))
-        if run_id is not None:
-            args_resumed.wandb_run_id = run_id
-            _persist_wandb_run_id(args_resumed.wandb_dir, run_id)
-            _persist_args_pickle(os.path.join(final_folder, 'args.pickle'), args_resumed)
+    wandb_logger = get_wandb_logger(
+        wandb_usr=args_resumed.wandb_usr,
+        wandb_dir=args_resumed.wandb_dir,
+        wandb_expname=args_resumed.train,
+        wandb_project=args_resumed.wandb_project,
+        wandb_run_id=getattr(args_resumed, "wandb_run_id", None),
+        resume_from_checkpoint=args_resumed.resume_from_checkpoint,
+        no_wandb=args_resumed.no_wandb,
+        wandb_online=args_resumed.online,
+        args=args_resumed,
+        args_folder=final_folder
+    )         
     main(args_resumed, wandb_logger)

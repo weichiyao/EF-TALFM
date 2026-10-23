@@ -333,7 +333,7 @@ class CloudARDecoder(nn.Module):
 
 
         self.pad_token_id = 0
-        self.eos_token_id = 1 if not self.no_eos else 0
+        self.eos_token_id = 1
         self.reset_parameters()
 
     def reset_parameters(self):
