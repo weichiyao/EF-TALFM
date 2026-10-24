@@ -1,26 +1,6 @@
 import argparse
 
 
-# Architecture switches cannot be changed while strictly resuming a checkpoint.
-# Runs created before a switch existed must resolve to the legacy architecture.
-_VAE_CHECKPOINT_ARCH_DEFAULTS = {
-    'decoder_explicit_property_token': False,
-    'disable_encoder_context_condition': False,
-}
-
-
-def merge_vae_resume_args(
-        saved_args: argparse.Namespace,
-        current_args: argparse.Namespace,
-    ) -> argparse.Namespace:
-    """Merge CLI overrides while preserving checkpoint-shaped VAE options."""
-    saved = vars(saved_args).copy()
-    current = vars(current_args).copy()
-    for name, legacy_default in _VAE_CHECKPOINT_ARCH_DEFAULTS.items():
-        current[name] = saved.get(name, legacy_default)
-    saved.update(current)
-    return argparse.Namespace(**saved)
-
 
 def add_vae_arguments(parser:argparse.ArgumentParser):
     ## Invariant autoencoder

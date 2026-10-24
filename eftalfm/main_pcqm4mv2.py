@@ -4,7 +4,10 @@ import pickle
 import os 
 import re 
 
-import torch 
+import torch
+from argparse import Namespace 
+
+from collections.abc import Callable
 
 from lightning.pytorch import Trainer, seed_everything  
 from model_training.lightning import (
@@ -13,12 +16,13 @@ from model_training.lightning import (
     load_training_weights,
     get_wandb_logger
 )
+from model_training.args_helper import merge_resume_args
 
 from eftalfm.argparser_setup.pcqm4mv2 import add_pcqm4mv2_arguments
 from eftalfm.argparser_setup.gm import add_gm_arguments
 from eftalfm.argparser_setup.common import add_common_arguments
 from eftalfm.argparser_setup.file_parser import ArgumentFileParser
-from eftalfm.argparser_setup.vae import add_vae_arguments, merge_vae_resume_args
+from eftalfm.argparser_setup.vae import add_vae_arguments 
 from eftalfm.data.pcqm4m_v2.data.data_plmodule import PCQM4MPLDataModule
 from eftalfm.data.latent_data_plmodule import LatentPLDataModule
 from eftalfm.modules.vae_plmodule import CloudVAEPLModule 
@@ -31,7 +35,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "true"
 _WANDB_RUN_DIR_RE = re.compile(r"^(?:offline-)?run-[^-]+-([A-Za-z0-9]+)$")
 
 
-def _print_run_summary(args, label: str = "Run config") -> None:
+def _print_run_summary(args:Namespace, label: str = "Run config") -> None:
     summary = {
         "train": args.train, 
         "dataset_name": args.dataset_name,
@@ -51,7 +55,7 @@ def _print_run_summary(args, label: str = "Run config") -> None:
     print(f"{label}: {summary}")
 
 
-def get_lgm_model(args, precomputed_latent, dm_pretransform_y=None, dm_invtransform_y=None, load_from_checkpoint_filename="none"):
+def get_lgm_model(args:Namespace, precomputed_latent:bool, dm_pretransform_y:Callable | None=None, dm_invtransform_y:Callable | None=None, load_from_checkpoint_filename:str="none"):
     pretrained_vae_checkpoint = args.pretrained_vae_checkpoint if hasattr(args, 'pretrained_vae_checkpoint') else None
     if pretrained_vae_checkpoint is not None:
         pretrained_vae_ckpt_path = os.path.join(args.log_dir, args.pretrained_vae_subfolder, 'vae', pretrained_vae_checkpoint)
@@ -202,13 +206,13 @@ def get_lgm_model(args, precomputed_latent, dm_pretransform_y=None, dm_invtransf
     return lightning_module
 
 
-def _get_vae_context_idx(args):
+def _get_vae_context_idx(args:Namespace):
     if getattr(args, "context_dim", 0) == 0:
         return "*"
     return args.context_idx if hasattr(args, "context_idx") else "*"
 
 
-def get_vae_model(args): 
+def get_vae_model(args:Namespace): 
     
     mol_extra_features = []
     atom_extra_features = []  
@@ -290,7 +294,7 @@ def create_args():
     return args
 
 
-def _get_checkpoint_dir(args):
+def _get_checkpoint_dir(args:Namespace):
     """Resolve EF-TALFM's existing stage-specific checkpoint directory."""
     if args.train.startswith("vae"):
         return os.path.join(args.log_dir, args.train, "vae")
@@ -300,7 +304,7 @@ def _get_checkpoint_dir(args):
 
 
 ##########################################################################
-def main(args, logger):
+def main(args:Namespace, logger):
     torch.set_float32_matmul_precision('high') 
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
@@ -405,7 +409,7 @@ if __name__ == "__main__":
             with open(args_path, 'rb') as f:
                 args_resumed = pickle.load(f)
             
-            args = merge_vae_resume_args(args_resumed, args)
+            args = merge_resume_args(args_resumed, args)
             print("Loaded args.pickle and merged with command-line overrides.")
         else:
             print(f"Could not find args.pickle at {args_path}; resuming with current command-line arguments.")

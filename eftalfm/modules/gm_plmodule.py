@@ -62,10 +62,6 @@ class CompletePGenModelModule(TrainPLModule):
             compute_conditioning_diagnostics=compute_conditioning_diagnostics,
             conditioning_diagnostics_n=self.conditioning_diag_n,
         )
-
-    def on_train_start(self) -> None:
-        # Check Distributed Data Parallel (DDP) or any distributed training strategy is being used
-        self.sync_dist = self.trainer.world_size > 1
     
     def training_step(self, batch, batch_idx, on_step:bool=True, on_epoch:bool=False):
         return self.general_step(
