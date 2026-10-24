@@ -384,9 +384,6 @@ class CloudARDecoder(nn.Module):
 
     def _embed_positions(self, position_scaled: Tensor) -> Tensor:
         return self.atompos_encoder(position_scaled) + self._position_type_embeds()  # (bz, max_n_nodes, emb_dim_pos) + (1, 1, emb_dim_pos)
-    
-    def _embed_frac_coords(self, frac_coords: Tensor) -> Tensor:
-        return self.atomfrac_encoder(frac_coords) + self._position_type_embeds()  # (bz, max_n_nodes, emb_dim_pos) + (1, 1, emb_dim_pos)
 
     def _property_token_embeds(self, batch_size: int, reference: Tensor) -> Tensor:
         if self.property_token is None:
@@ -1070,6 +1067,12 @@ class CloudARDecoder(nn.Module):
         if self.latent_encoder is not None:
             latent_embeds = self.latent_encoder(latent_embeds)
 
+        if self.context_dim > 0 and self.explicit_property_token:
+            generated_y_lat = self._predict_latent_only_property(
+                latent_embeds,
+                latent_embeds_raw,
+            )
+
 
         generated_x = torch.empty((bz, 0, self.num_atom_features)).to(latent_embeds.device).to(torch.int64)
         generated_pos = torch.empty((bz, 0, 3)).to(latent_embeds)
@@ -1148,6 +1151,26 @@ class CloudARDecoder(nn.Module):
 
         generated_pos = generated_pos * self.position_scale
 
+        if self.context_dim > 0 and self.explicit_property_token:
+            atom_padding_mask = generated_x[..., 0].eq(self.pad_token_id)
+            generated_y_mol = self._predict_molecule_property(
+                latent_embeds=latent_embeds,
+                position=generated_pos,
+                x=generated_x,
+                padding_mask=atom_padding_mask,
+            )
+
+        if self.context_dim > 0 and self.explicit_property_token:
+            return (
+                generated_pos,
+                generated_x,
+                generated_charge,
+                generated_spinmp,
+                generated_number_of_rings,
+                generated_has_fused_rings,
+                generated_y_lat, 
+                generated_y_mol
+            )
         return (
             generated_pos,
             generated_x,

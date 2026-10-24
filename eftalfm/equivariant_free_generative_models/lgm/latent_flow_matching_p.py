@@ -1037,23 +1037,9 @@ class CompletePLatentFlowMatching(CNFlows):
                 print("Warning: y is provided, but z0 is also provided. y will be ignored.")
         decoder = self.latent_model.decoder.model
         if latent_only:
-            latent_embeds_raw = z0 if decoder.use_ada_ln_zero else None
-            latent_embeds = (
-                decoder.latent_encoder(z0)
-                if decoder.latent_encoder is not None
-                else z0
-            )
-            generated_y_lat = decoder._predict_latent_only_property(
-                latent_embeds,
-                latent_embeds_raw,
-            )
             if y is None:
-                return z0, None, generated_y_lat
-            return (
-                z0.reshape(n_y, n_samples, -1),
-                y,
-                generated_y_lat.reshape(n_y, n_samples, -1),
-            )
+                return z0, None 
+            return z0.reshape(n_y, n_samples, -1), y
 
         decoder_outputs = decoder.generate_cache(z0)
         if len(decoder_outputs) < 6:
@@ -1061,6 +1047,10 @@ class CompletePLatentFlowMatching(CNFlows):
                 f"Expected decoder.generate_cache to return at least 6 values, "
                 f"received {len(decoder_outputs)}."
             )
+
+        if y is None:
+            return decoder_outputs 
+
         (
             generated_pos, 
             generated_seq, 
@@ -1069,71 +1059,40 @@ class CompletePLatentFlowMatching(CNFlows):
             generated_number_of_rings,
             generated_has_fused_rings,
             *_,
-        ) = decoder_outputs
-        generated_y_lat = decoder_outputs[-1]
-        generated_y_mol = None
-        molecule_property_predictor = getattr(
-            decoder, "_predict_molecule_property", None
-        )
+        ) = decoder_outputs 
+        
         if (
             return_generated_y
-            and generated_y_lat is not None
-            and molecule_property_predictor is not None
+            and decoder.explicit_property_token 
         ):
-            atom_padding_mask = generated_seq[..., 0].eq(decoder.pad_token_id)
-            generated_y_mol = molecule_property_predictor(
-                latent_embeds=z0,
-                position=generated_pos,
-                x=generated_seq,
-                padding_mask=atom_padding_mask,
-            )
-        if y is None: 
-            outputs = (
-                generated_pos, 
-                generated_seq, 
-                generated_charge,
-                generated_spinmp,
-                generated_number_of_rings,
-                generated_has_fused_rings, 
-                z0, 
-                None
-            )
-            return (
-                (*outputs, generated_y_lat, generated_y_mol)
-                if return_generated_y
-                else outputs
-            )
-        else:
-            generated_pos = generated_pos.reshape(n_y, n_samples, -1, 3)
-            generated_seq = generated_seq.reshape(n_y, n_samples, -1, self.latent_model.num_atom_features)
-            if generated_charge is not None:
-                generated_charge = generated_charge.reshape(n_y, n_samples)
-            if generated_spinmp is not None:
-                generated_spinmp = generated_spinmp.reshape(n_y, n_samples)
-            if generated_number_of_rings is not None:
-                generated_number_of_rings = generated_number_of_rings.reshape(n_y, n_samples)
-            if generated_has_fused_rings is not None:
-                generated_has_fused_rings = generated_has_fused_rings.reshape(n_y, n_samples)
-            if generated_y_lat is not None:
-                generated_y_lat = generated_y_lat.reshape(n_y, n_samples, -1)
-            if generated_y_mol is not None:
-                generated_y_mol = generated_y_mol.reshape(n_y, n_samples, -1)
-            z0 = z0.reshape(n_y, n_samples, -1)
-            outputs = (
-                generated_pos, 
-                generated_seq, 
-                generated_charge,
-                generated_spinmp,
-                generated_number_of_rings,
-                generated_has_fused_rings, 
-                z0, 
-                y
-            )
-            return (
-                (*outputs, generated_y_lat, generated_y_mol)
-                if return_generated_y
-                else outputs
-            )
+            generated_y_lat = decoder_outputs[-2]
+            generated_y_mol = decoder_outputs[-1]
+            generated_y_lat = generated_y_lat.reshape(n_y, n_samples, -1)
+            generated_y_mol = generated_y_mol.reshape(n_y, n_samples, -1)
+ 
+        generated_pos = generated_pos.reshape(n_y, n_samples, -1, 3)
+        generated_seq = generated_seq.reshape(n_y, n_samples, -1, self.latent_model.num_atom_features)
+        generated_charge = generated_charge.reshape(n_y, n_samples)
+        generated_spinmp = generated_spinmp.reshape(n_y, n_samples)
+        generated_number_of_rings = generated_number_of_rings.reshape(n_y, n_samples) 
+        generated_has_fused_rings = generated_has_fused_rings.reshape(n_y, n_samples)
+        
+        z0 = z0.reshape(n_y, n_samples, -1)
+        outputs = (
+            generated_pos, 
+            generated_seq, 
+            generated_charge,
+            generated_spinmp,
+            generated_number_of_rings,
+            generated_has_fused_rings, 
+            z0, 
+            y
+        )
+        return (
+            (*outputs, generated_y_lat, generated_y_mol)
+            if return_generated_y
+            else outputs
+        )
     
     @torch.no_grad()
     def log_prob(self, x: Tensor, y:Tensor=None) -> Tensor:
