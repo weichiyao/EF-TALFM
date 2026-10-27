@@ -1062,6 +1062,8 @@ class CloudARDecoder(nn.Module):
         
         
         bz = latent_embeds.shape[0]
+        # The molecule-property helper applies its own latent projection.
+        molecule_latent_embeds = latent_embeds
         latent_embeds_raw = latent_embeds.clone() if self.use_ada_ln_zero else None
         # map the latent embedding to the transformer input embedding space
         if self.latent_encoder is not None:
@@ -1154,7 +1156,7 @@ class CloudARDecoder(nn.Module):
         if self.context_dim > 0 and self.explicit_property_token:
             atom_padding_mask = generated_x[..., 0].eq(self.pad_token_id)
             generated_y_mol = self._predict_molecule_property(
-                latent_embeds=latent_embeds,
+                latent_embeds=molecule_latent_embeds,
                 position=generated_pos,
                 x=generated_x,
                 padding_mask=atom_padding_mask,
