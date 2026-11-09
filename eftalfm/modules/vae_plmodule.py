@@ -113,7 +113,7 @@ class CloudVAEPLModule(TrainPLModule):
             return f"val_{self._validation_loader_name(dataloader_idx)}"
         return "val"
         
-    def compute_loss(self, batch) -> tuple[Tensor, dict, dict]:
+    def compute_loss(self, batch) -> tuple[Tensor, dict]:
         if self.training:
             loss_weights = {
                 "wkl" : self.wkl,

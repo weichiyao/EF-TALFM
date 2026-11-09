@@ -320,6 +320,7 @@ class CloudVAEModelTransformerP(nn.Module):
         print(f"CloundVAE Using corruption_type: {self.corruption_type}")
         
         self.loss_fct_mol  = torch.nn.CrossEntropyLoss(reduction='none')  
+        self.loss_fct_cat = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=0)
          
         self.property_source_loss_weights = (
             float(property_molecule_only_loss_weight),
@@ -547,7 +548,7 @@ class CloudVAEModelTransformerP(nn.Module):
         charge_loss = self.loss_fct_mol(pred_charge_logits, charge)
         loss_itemized['REC_Loss_mol_charge'] = charge_loss.detach()
          
-        spinmp_loss = self.loss_fct_mol(pred_spinmp_logits, spin_multiplicity, "spinmp")
+        spinmp_loss = self.loss_fct_mol(pred_spinmp_logits, spin_multiplicity)
         loss_itemized['REC_Loss_mol_spinmp'] = spinmp_loss.detach()
         
         number_of_rings_loss = self.loss_fct_mol(pred_number_of_rings_logits, number_of_rings)
@@ -773,7 +774,6 @@ class CloudVAEModelTransformerP(nn.Module):
                 0-valid, 1-padding
         """
         loss_dict = {}
-        diagnose_dict = {}
         b, max_n_nodes, _ = batched_data['x'].shape
         device = batched_data['x'].device
        
@@ -816,7 +816,7 @@ class CloudVAEModelTransformerP(nn.Module):
             x=orig_x, 
             position=orig_pos, 
             token_padding_mask=batched_data.get('padding_mask', None),
-            num_atoms=batched_data('num_atoms', None), 
+            num_atoms=batched_data.get('num_atoms', None),
             charge=batched_data['charge'],
             spin_multiplicity=batched_data['spin_multiplicity'],
             number_of_rings=batched_data['number_of_rings'],
@@ -871,7 +871,7 @@ class CloudVAEModelTransformerP(nn.Module):
         # Decoder with teacher forcing, using corrupted x and position, force to rely on the latent features instead of the input features
         decoder_kwargs = {
             "latent_embeds": z.view(b, 1, -1),
-            "position": batched_data['pos'] if self.num_mol_datasets > 0 else None, # (b, max_n_nodes, 3)
+            "position": batched_data['pos'], # (b, max_n_nodes, 3)
             "x": batched_data['x'][...,:self.num_atom_features], # (b, max_n_nodes, d_x)
             "target_x": orig_x[...,:self.num_atom_features],
             "padding_mask": padding_mask, # (b, 1+n_nodes) EOS token is valid, set as False, and n_nodes includes EOS token; +1 for the latent embedding entry
@@ -887,8 +887,8 @@ class CloudVAEModelTransformerP(nn.Module):
             pred_number_of_rings_logits, 
             pred_has_fused_rings_logits, 
             pred_y,
-        ) = decoder_outputs[:10]
-        pred_y_source = decoder_outputs[10] if len(decoder_outputs) > 10 else None
+            pred_y_source,
+        ) = decoder_outputs
         # Compute the reconstruction loss against the original x and position. 
         reconstruction_kwargs = {
             "position": orig_pos,      
@@ -928,7 +928,7 @@ class CloudVAEModelTransformerP(nn.Module):
             + self.mu_cov_weight * mu_cov_loss
         )
         loss_dict.update(loss_itemized)
-        return loss, loss_dict, diagnose_dict
+        return loss, loss_dict
     
     def configure_AdamW(self, weight_decay=0.01, learning_rate=1e-4, betas=(0.9, 0.999), eps=1e-8):
         import inspect
@@ -1238,6 +1238,3 @@ class CloudVAEModelTransformerP(nn.Module):
             z = z_mu
         
         return self.decoder.model.generate_cache(latent_embeds=z.view(b, 1, -1))
-        
-            
-             
