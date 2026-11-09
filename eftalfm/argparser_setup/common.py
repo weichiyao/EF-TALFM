@@ -40,6 +40,7 @@ def add_common_arguments(parser:ArgumentParser):
     parser.add_argument('--precision', default='32-true', 
                         help="see lighning Trainer. '16-mixed' for FP16.")
     parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--eval_batch_size', type=int, default=32)
     parser.add_argument('--lr', type=float, default=2e-5)
     parser.add_argument('--max_epochs', type=int, default=2)
     parser.add_argument('--min_epochs', type=int, default=1) 

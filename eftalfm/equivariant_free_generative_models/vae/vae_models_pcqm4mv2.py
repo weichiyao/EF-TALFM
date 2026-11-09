@@ -224,21 +224,10 @@ class CloudVAEModelTransformerP(nn.Module):
         self.encoder   = encoder
         self.decoder   = decoder 
         self.context_name = context_name
-        encoder_model = getattr(self.encoder, "model", self.encoder)
         decoder_model = getattr(self.decoder, "model", self.decoder)
-        encoder_particle_feature = getattr(encoder_model, "particle_feature", None)
-        encoder_context_dim = int(getattr(encoder_particle_feature, "context_dim", 0))
-        decoder_context_dim = int(getattr(decoder_model, "context_dim", 0))
-        if encoder_context_dim not in (0, decoder_context_dim):
-            raise ValueError(
-                "Encoder context_dim must be zero or match decoder context_dim; "
-                f"received encoder={encoder_context_dim}, decoder={decoder_context_dim}."
-            )
-        self.encoder_context_dim = encoder_context_dim
-        model_context_dim = decoder_context_dim
+        decoder_context_dim = self.context_dim
         if context_idx is None or (isinstance(context_idx, str) and context_idx == "*"):
             self.context_idx = None
-            self.context_dim = model_context_dim
         else:
             if isinstance(context_idx, str):
                 context_idx = [int(idx) for idx in context_idx.split(",") if idx != ""]
@@ -248,28 +237,20 @@ class CloudVAEModelTransformerP(nn.Module):
                 context_idx = context_idx.flatten().tolist()
             else:
                 context_idx = list(context_idx)
+            if len(context_idx) != decoder_context_dim:
+                raise ValueError(
+                    "Property context selection does not match the decoder context_dim; "
+                    f"selected {len(context_idx)} values but decoder expects {decoder_context_dim}."
+                )
             self.context_idx = torch.tensor(context_idx, dtype=torch.long)
-            self.context_dim = len(context_idx)
-        if self.context_dim != model_context_dim:
-            raise ValueError(
-                "Property context selection does not match the model context_dim; "
-                f"selected {self.context_dim} values but decoder expects {model_context_dim}."
-            )
-        if self.context_dim <= 1:
+        if decoder_context_dim <= 1:
             self.context_metric_suffixes = ()
-        elif self.context_idx is None:
-            assert self.context_dim == 0, "context_dim must be 0 when context_idx is None"
-            # self.context_metric_suffixes = tuple(
-            #     f"dim_{dim}" for dim in range(self.context_dim)
-            # )
         else:
+            assert self.context_idx is not None, "context_idx must select columns for multiple decoder properties"
             self.context_metric_suffixes = tuple(
                 f"idx_{int(idx)}" for idx in self.context_idx.tolist()
             )
-        print(
-            "CloudVAE context dimensions (encoder, decoder): "
-            f"({self.encoder_context_dim}, {self.context_dim})"
-        )
+        print(f"CloudVAE decoder context dimension: {decoder_context_dim}")
         self.kl_aggregation = kl_aggregation 
         self.standparam = standparam  
         self.free_bits_per_dim = max(float(free_bits_per_dim), 0.0)
@@ -319,8 +300,8 @@ class CloudVAEModelTransformerP(nn.Module):
         print(f"CloundVAE Using corruption_pos_only: {self.corruption_pos_only}")
         print(f"CloundVAE Using corruption_type: {self.corruption_type}")
         
-        self.loss_fct_mol  = torch.nn.CrossEntropyLoss(reduction='none')  
-        self.loss_fct_cat = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=0)
+        self.loss_fct_mol  = torch.nn.CrossEntropyLoss(reduction='none')
+        self.loss_fct_cat  = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=0)
          
         self.property_source_loss_weights = (
             float(property_molecule_only_loss_weight),
@@ -357,7 +338,7 @@ class CloudVAEModelTransformerP(nn.Module):
         
         self.loss_fct_cts_eval = torch.nn.L1Loss(reduction='none')
         self.context_loss_type = context_loss_type
-        if self.context_dim > 0:
+        if decoder_context_dim > 0:
             if context_loss_type.split('-')[0] == "l2":
                 self.loss_fct_context = torch.nn.MSELoss(reduction='none')
             elif context_loss_type.split('-')[0] == "smoothl1":
@@ -401,6 +382,12 @@ class CloudVAEModelTransformerP(nn.Module):
             f"{self.atom_feature_cardinalities}"
         )
           
+    @property
+    def context_dim(self) -> int:
+        """Number of property values predicted by the decoder."""
+        decoder_model = getattr(self.decoder, "model", self.decoder)
+        return int(getattr(decoder_model, "context_dim", 0))
+
     def disabled_train(self, mode=True):
         """Overwrite model.train with this function to make sure train/eval mode
         does not change anymore."""
@@ -558,9 +545,10 @@ class CloudVAEModelTransformerP(nn.Module):
         loss_itemized['REC_Loss_mol_has_fused_rings'] = has_fused_rings_loss.detach()
         
         ##### ===== Context ===== #####
-        if self.context_dim > 0:
-            pred_y_2d = pred_y.reshape(-1, self.context_dim)
-            y_2d = y.reshape(-1, self.context_dim)
+        context_dim = self.context_dim
+        if context_dim > 0:
+            pred_y_2d = pred_y.reshape(-1, context_dim)
+            y_2d = y.reshape(-1, context_dim)
             if pred_y_source is None:
                 pred_y_source = torch.full(
                     (pred_y_2d.shape[0],),
@@ -611,7 +599,7 @@ class CloudVAEModelTransformerP(nn.Module):
             source_objectives = source_objective_sums / safe_source_counts
 
             source_objective_per_dim_sums = context_objective_per_dim.new_zeros(
-                len(source_weights), self.context_dim
+                len(source_weights), context_dim
             ).index_add_(0, pred_y_source, context_objective_per_dim)
             source_objectives_per_dim = (
                 source_objective_per_dim_sums
@@ -633,7 +621,7 @@ class CloudVAEModelTransformerP(nn.Module):
             loss_itemized['REC_Loss_context_weighted'] = context_loss.detach()
 
             # For multi-property context
-            if self.context_dim > 1:
+            if context_dim > 1:
                 context_objectives_per_dim = context_objective_per_dim.mean(dim=0)
                 context_weighted_per_dim = (
                     source_weights[:, None]
@@ -732,9 +720,10 @@ class CloudVAEModelTransformerP(nn.Module):
         position_padding_mask[batch_idx, eos_idx] = True    # EOS token is excluded from the position loss
         return position_padding_mask
     
-    def get_context(self, batched_data: dict[str, Tensor], batch_size: int, device: torch.device) -> Tensor:
-        """Select the property/context columns used by the encoder and context reconstruction head."""
-        if self.context_dim == 0:
+    def get_context(self, batched_data: dict[str, Tensor], batch_size: int, device: torch.device) -> Tensor | None:
+        """Select the property targets for the decoder loss."""
+        context_dim = self.context_dim
+        if context_dim == 0:
             return None
         if self.context_name not in batched_data:
             raise KeyError(f"Missing context tensor '{self.context_name}' in batched_data.")
@@ -745,12 +734,12 @@ class CloudVAEModelTransformerP(nn.Module):
             context_idx = self.context_idx.to(device=device)
             context = context.index_select(dim=1, index=context_idx)
         else:
-            if context.shape[1] < self.context_dim:
+            if context.shape[1] < context_dim:
                 raise ValueError(
                     f"Context tensor '{self.context_name}' has {context.shape[1]} columns, "
-                    f"but model context_dim is {self.context_dim}."
+                    f"but the decoder expects {context_dim}."
                 )
-            context = context[:, :self.context_dim]
+            context = context[:, :context_dim]
         return context
     
     def compute_loss(
@@ -767,23 +756,28 @@ class CloudVAEModelTransformerP(nn.Module):
         ) -> tuple[Tensor, dict]:
         """Computes an estimator for the variational lower bound.
         
-        batched_data (max_n_nodes have the eos token counted)
-            - position     (b, max_n_nodes, 3)  
-            - x            (b, max_n_nodes, 1) 
-            - padding_mask (b, max_n_nodes)
-                0-valid, 1-padding
+        Each row contains atom tokens, EOS, and then any padding.
+        batched_data:
+            - pos          (b, max_n_nodes, 3)
+            - x            (b, max_n_nodes, d_x), with token ID 0 for padding
+            - num_atoms    (b,), optional token counts including EOS
+            - padding_mask (b, max_n_nodes), optional, True for padding only
         """
         loss_dict = {}
-        b, max_n_nodes, _ = batched_data['x'].shape
-        device = batched_data['x'].device
-       
-        num_atoms_with_eos = batched_data.get('num_atoms', None)
-        if num_atoms_with_eos is None and 'padding_mask' in batched_data:
-            num_atoms_with_eos = (~batched_data['padding_mask'].bool()).sum(dim=-1)
+        x = batched_data['x']
+        b, max_n_nodes, _ = x.shape
+        device = x.device
+
+        # Resolve the count once for the encoder fallback, corruption, and loss.
+        token_padding_mask = batched_data.get('padding_mask')
+        num_atoms_with_eos = batched_data.get('num_atoms')
         if num_atoms_with_eos is None:
-            num_atoms_with_eos = batched_data['x'][:, :, 0].ne(0).sum(dim=-1)
+            if token_padding_mask is None:
+                token_padding_mask = x[..., 0].eq(0)
+            num_atoms_with_eos = (~token_padding_mask.bool()).sum(dim=-1)
+
         if self.corruption_ratio > 0 and self.training:                           # (b, max_n_nodes, 3)
-            orig_x   = batched_data['x'].clone()                                   # (b, max_n_nodes, d_x)
+            orig_x   = x.clone()                                                   # (b, max_n_nodes, d_x)
             
             orig_pos = batched_data['pos'].clone()       
             # `num_atoms` includes EOS in this dataset, so use `num_atoms - 1`
@@ -807,7 +801,7 @@ class CloudVAEModelTransformerP(nn.Module):
             batched_data['pos'].masked_fill_(invalid_position_mask, 0.0) 
             
         else:
-            orig_x   = batched_data['x']  
+            orig_x   = x
             orig_pos = batched_data['pos']                                 # (b, max_n_nodes, 3) 
         y = self.get_context(batched_data, b, device)
 
@@ -815,17 +809,14 @@ class CloudVAEModelTransformerP(nn.Module):
         z_mu, z_sigma, padding_mask = self.encoder(
             x=orig_x, 
             position=orig_pos, 
-            token_padding_mask=batched_data.get('padding_mask', None),
-            num_atoms=batched_data.get('num_atoms', None),
+            token_padding_mask=token_padding_mask,
+            num_atoms=num_atoms_with_eos,
             charge=batched_data['charge'],
             spin_multiplicity=batched_data['spin_multiplicity'],
             number_of_rings=batched_data['number_of_rings'],
-            has_fused_rings=batched_data['has_fused_rings'], 
-            y=y if self.encoder_context_dim > 0 else None,
+            has_fused_rings=batched_data['has_fused_rings'],
         )
-        if num_atoms_with_eos is None:
-            num_atoms_with_eos = (~padding_mask[:, 1:]).sum(dim=-1)
-        position_padding_mask = self.get_position_padding_mask(num_atoms_with_eos, padding_mask[:, 1:])  # (b, max_n_nodes)
+        position_padding_mask = self.get_position_padding_mask(num_atoms_with_eos, padding_mask[:, 1:])
         assert z_mu.dim() == 3, "z_mu and z_sigma must have the same shape"
         assert z_mu.shape[0] == b, "z_mu and z_mu must have the same batch size"
         assert z_mu.shape[1] == 1, "z_mu first dimension must be 1"
@@ -871,7 +862,7 @@ class CloudVAEModelTransformerP(nn.Module):
         # Decoder with teacher forcing, using corrupted x and position, force to rely on the latent features instead of the input features
         decoder_kwargs = {
             "latent_embeds": z.view(b, 1, -1),
-            "position": batched_data['pos'], # (b, max_n_nodes, 3)
+            "position": batched_data['pos'],  # (b, max_n_nodes, 3)
             "x": batched_data['x'][...,:self.num_atom_features], # (b, max_n_nodes, d_x)
             "target_x": orig_x[...,:self.num_atom_features],
             "padding_mask": padding_mask, # (b, 1+n_nodes) EOS token is valid, set as False, and n_nodes includes EOS token; +1 for the latent embedding entry
@@ -1189,35 +1180,24 @@ class CloudVAEModelTransformerP(nn.Module):
         return optimizer
 
     def reconstruct(self, batched_data:dict, sample_posterior:bool=False):
-        """Computes an estimator for the variational lower bound.
-        
-        batched_data (max_n_nodes have the eos token counted)
-            - position     (b, max_n_nodes, 3)  
-            - x            (b, max_n_nodes, 1) 
-            - padding_mask (b, max_n_nodes)
-                0-valid, 1-padding
-        """ 
+        """Decode the posterior mean or a posterior sample for a molecule batch.
+
+        An optional padding mask aligns with x's token slots, including EOS.
+        EOS is valid, and the encoder prepends its own valid latent slot.
+        """
         b = batched_data['x'].shape[0]
-        device = batched_data['x'].device
-        
-        num_atoms_with_eos = batched_data.get('num_atoms', None)
-         
-        y = self.get_context(batched_data, b, device)
 
         # Encoder output.
-        z_mu, z_sigma, padding_mask = self.encoder(
+        z_mu, z_sigma, _ = self.encoder(
             x=batched_data['x'],  
-            position=batched_data['pos'] if self.num_mol_datasets > 0 else None,  
-            token_padding_mask=batched_data.get('padding_mask', None),
-            num_atoms=batched_data.get('num_atoms', None), 
-            charge=batched_data['charge'] if self.num_mol_datasets > 0 else None,
-            spin_multiplicity=batched_data['spin_multiplicity'] if self.num_mol_datasets > 0 else None,
-            number_of_rings=batched_data['number_of_rings'] if self.num_mol_datasets > 0 else None,
-            has_fused_rings=batched_data['has_fused_rings'] if self.num_mol_datasets > 0 else None, 
-            y=y if self.encoder_context_dim > 0 else None,
+            position=batched_data['pos'],
+            token_padding_mask=batched_data.get('padding_mask'),
+            num_atoms=batched_data.get('num_atoms'),
+            charge=batched_data.get('charge'),
+            spin_multiplicity=batched_data.get('spin_multiplicity'),
+            number_of_rings=batched_data.get('number_of_rings'),
+            has_fused_rings=batched_data.get('has_fused_rings'),
         )
-        if num_atoms_with_eos is None:
-            num_atoms_with_eos = (~padding_mask[:, 1:]).sum(dim=-1)
         assert z_mu.dim() == 3, "z_mu and z_sigma must have the same shape"
         assert z_mu.shape[0] == b, "z_mu and z_mu must have the same batch size"
         assert z_mu.shape[1] == 1, "z_mu first dimension must be 1"

@@ -14,6 +14,8 @@ def add_pcqm4mv2_arguments(parser:argparse.ArgumentParser):
     parser.add_argument('--split_filename', type=str, default='split_dict.pt', help="split filename")
     parser.add_argument('--train_subset', type=str, default="train", help="data subset to use for training (e.g. train, valid, test)")
     parser.add_argument('--valid_subset', type=str, default="valid", help="data subset to use for validation (e.g. train, valid, test)")
+    parser.add_argument('--max_positions', type=int, default=512,
+                        help='maximum atom sequence length, including EOS')
     parser.add_argument('--skip_invalid_size_inputs_valid_test', action='store_true', 
                         default=False, help="ignore too long or too short lines in valid and test set")
     parser.add_argument('--required_batch_size_multiple', type=int, default=8, 
